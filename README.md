@@ -1,40 +1,26 @@
 # HTML Parser WASM
 
-Zigで実装された軽量なHTMLパーサーライブラリ。スクレイピング向けに最適化され、WebAssemblyでブラウザやDenoから利用可能です。
+Zigで実装された軽量なHTMLパーサーライブラリ。
+スクレイピング向けでサーバーサイドJS/TSでの利用を想定しています。
 
 ## 特徴
 
 - 🚀 **軽量・高速** - Zigの性能を活かした効率的なパース処理
-- 🎯 **スクレイピング最適化** - CSSセレクターによる要素検索
+- 🎯 **スクレイピング最適化** - document APIを意識しました!!
 - 🛡️ **寛容なパース** - 壊れたHTMLも柔軟に処理
-- 📦 **WASM対応** - ブラウザ・Deno・Node.jsで動作
-- 🔧 **ゼロ依存** - 外部ライブラリ不要
+- 📦 **WASM対応** - WASMが動く所ならどこへでも
+- 🔧 **ゼロ依存** - とっても軽量です。
 
 ## 実装済み機能
 
-### 基本機能
-- ✅ HTMLトークナイザー（タグ、属性、テキスト、コメント）
-- ✅ DOMツリー構築
-- ✅ テキストコンテンツ抽出
-- ✅ 属性の取得・設定
+セレクターは下記の物を使えます、制限事項も一緒にご覧ください。
+- タグセレクター（`div`, `p`, `a` など）
+- クラスセレクター（`.classname`）
+- IDセレクター（`#id`）
+- 属性セレクター（`[href]`, `[type="text"]`）
+- ユニバーサルセレクター（`*`）
 
-### セレクター機能
-- ✅ タグセレクター（`div`, `p`, `a` など）
-- ✅ クラスセレクター（`.classname`）
-- ✅ IDセレクター（`#id`）
-- ✅ 属性セレクター（`[href]`, `[type="text"]`）
-- ✅ ユニバーサルセレクター（`*`）
-
-### ストリーミングパース（NEW!）
-- ✅ チャンクベース処理（大容量HTML対応）
-- ✅ セレクティブパース（必要な要素のみ抽出）
-- ✅ メモリ効率最適化（マッチした要素のみ保持）
-- ✅ ネットワークストリーミング対応
-
-### WASM対応
-- ✅ WebAssemblyビルド
-- ✅ TypeScript/JavaScriptバインディング
-- ✅ メモリ管理
+ストリーミングパースに対応してい為、そちらを使用するとメモリ効率等が良くなります。
 
 ## インストール
 
@@ -49,10 +35,9 @@ zig build wasm
 ## 使い方
 
 WASMファイルの取得方法は環境に応じてユーザーが選択できます。
+下記ではDenoでの利用の例を記します。
 
 ### 通常パース（DOM操作が必要な場合）
-
-#### Deno
 
 ```typescript
 import { HTMLParser } from "./main.ts";
@@ -71,8 +56,6 @@ parser.cleanup();
 ```
 
 ### ストリーミングパース（大容量HTML・メモリ効率重視）
-
-#### Deno
 
 ```typescript
 import { StreamingHTMLParser } from "./main.ts";
@@ -95,54 +78,6 @@ parser.finish();
 // 結果取得
 const prices = parser.getMatchesText(".price");
 console.log(prices); // ["$99", "$149", "$199"]
-
-parser.cleanup();
-```
-
-#### ブラウザ
-
-```javascript
-import { StreamingHTMLParser } from "./main.js";
-
-const parser = new StreamingHTMLParser();
-
-const response = await fetch("./html_purser_wasm.wasm");
-const wasmBytes = await response.arrayBuffer();
-await parser.init(wasmBytes);
-
-parser.addSelector(".product-title");
-parser.addSelector(".price");
-
-// ストリーミング処理
-const reader = await fetch(htmlUrl).body.getReader();
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  parser.feed(new TextDecoder().decode(value));
-}
-parser.finish();
-
-const titles = parser.getMatchesText(".product-title");
-console.log(titles);
-
-parser.cleanup();
-```
-
-### Node.js
-
-```javascript
-const fs = require('fs');
-const { HTMLParser } = require('./main.js');
-
-const parser = new HTMLParser();
-
-// WASM ファイルを読み込み
-const wasmBytes = fs.readFileSync('./html_purser_wasm.wasm');
-await parser.init(wasmBytes);
-
-parser.parse('<h1>Title</h1>');
-const text = parser.querySelector("h1");
-console.log(text); // "Title"
 
 parser.cleanup();
 ```
@@ -235,6 +170,13 @@ pub fn main() !void {
     }
 }
 ```
+
+## 制限事項
+
+- WASMビルドは固定サイズのバッファ（1MB）を使用
+- 非常に大きなHTMLファイル（>1MB）はストリーミングパースを推奨
+- 複雑なCSSセレクター（擬似クラス等）は未実装
+- ストリーミングパースはDOM操作不可（抽出専用）
 
 ## ビルドとテスト
 
@@ -348,34 +290,11 @@ pub fn querySelectorAllText(allocator: Allocator, root: *Node, selector: []const
 pub fn querySelectorAttribute(allocator: Allocator, root: *Node, selector: []const u8, attr_name: []const u8) !ArrayList([]const u8)
 ```
 
-## パフォーマンス
-
-| 項目 | 値 |
-|------|-----|
-| WASMサイズ | 14KB（ReleaseSmall） |
-| 通常パース（10KB HTML） | ~0.1ms（ネイティブ）、~0.5ms（WASM） |
-| ストリーミングパース | メモリ使用量: マッチ要素数に比例（固定オーバーヘッド最小） |
-
-### メモリ使用量比較（100MB HTML、100要素抽出の場合）
-
-| パース方式 | メモリ使用量 | 用途 |
-|-----------|-------------|------|
-| 通常パース | ~500MB | 小〜中規模HTML、DOM操作必要 |
-| ストリーミング | ~1MB | 大規模HTML、要素抽出のみ |
-
-## 制限事項
-
-- WASMビルドは固定サイズのバッファ（1MB）を使用
-- 非常に大きなHTMLファイル（>1MB）はストリーミングパースを推奨
-- 複雑なCSSセレクター（擬似クラス等）は未実装
-- ストリーミングパースはDOM操作不可（抽出専用）
-
-## 今後の実装予定
+## RoadMap!!
 
 - [ ] 子孫セレクター（`div p`, `ul > li`）
 - [ ] 疑似クラス（`:first-child`, `:nth-child(n)`）
 - [ ] 複合セレクター（`div.class#id`）
-- [ ] ストリーミングパースのWASM対応
 - [ ] インデックス作成（高速検索）
 - [ ] ブラウザ向けES Modules対応
 
