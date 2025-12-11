@@ -1,6 +1,8 @@
 const std = @import("std");
 const Node = @import("node.zig").Node;
 const Parser = @import("parser.zig").Parser;
+const StreamingParser = @import("streaming.zig").StreamingParser;
+const MatchResult = @import("streaming.zig").MatchResult;
 const query = @import("query.zig");
 
 const page_size = 64 * 1024; // 64KB
@@ -9,6 +11,7 @@ var fba = std.heap.FixedBufferAllocator.init(&buffer);
 const allocator = fba.allocator();
 
 var parser_instance: ?*Parser = null;
+var streaming_parser_instance: ?*StreamingParser = null;
 var last_result_nodes: ?std.ArrayList(*Node) = null;
 var last_result_texts: ?std.ArrayList([]const u8) = null;
 var last_text: ?[]const u8 = null;
@@ -167,6 +170,135 @@ export fn querySelectorAttribute(
     return count;
 }
 
+// ストリーミングパーサー初期化
+export fn streamingInit() bool {
+    if (streaming_parser_instance) |p| {
+        p.deinit();
+        allocator.destroy(p);
+    }
+    
+    const parser = allocator.create(StreamingParser) catch return false;
+    parser.* = StreamingParser.init(allocator);
+    streaming_parser_instance = parser;
+    return true;
+}
+
+// ストリーミングパーサーにセレクター追加
+export fn streamingAddSelector(selector_ptr: [*]const u8, selector_len: usize) bool {
+    const parser = streaming_parser_instance orelse return false;
+    const selector = selector_ptr[0..selector_len];
+    parser.addSelector(selector) catch return false;
+    return true;
+}
+
+// チャンクをフィード
+export fn streamingFeed(chunk_ptr: [*]const u8, chunk_len: usize) bool {
+    const parser = streaming_parser_instance orelse return false;
+    const chunk = chunk_ptr[0..chunk_len];
+    parser.feed(chunk) catch return false;
+    return true;
+}
+
+// ストリーミングパース完了
+export fn streamingFinish() bool {
+    const parser = streaming_parser_instance orelse return false;
+    parser.finish() catch return false;
+    return true;
+}
+
+// マッチ数を取得
+export fn streamingGetMatchCount(selector_ptr: [*]const u8, selector_len: usize) usize {
+    const parser = streaming_parser_instance orelse return 0;
+    const selector = selector_ptr[0..selector_len];
+    if (parser.getMatches(selector)) |matches| {
+        return matches.len;
+    }
+    return 0;
+}
+
+// マッチしたテキストを取得
+export fn streamingGetMatchText(
+    selector_ptr: [*]const u8,
+    selector_len: usize,
+    index: usize,
+) ?[*]const u8 {
+    const parser = streaming_parser_instance orelse return null;
+    const selector = selector_ptr[0..selector_len];
+    if (parser.getMatches(selector)) |matches| {
+        if (index < matches.len) {
+            return matches[index].text.ptr;
+        }
+    }
+    return null;
+}
+
+export fn streamingGetMatchTextLen(
+    selector_ptr: [*]const u8,
+    selector_len: usize,
+    index: usize,
+) usize {
+    const parser = streaming_parser_instance orelse return 0;
+    const selector = selector_ptr[0..selector_len];
+    if (parser.getMatches(selector)) |matches| {
+        if (index < matches.len) {
+            return matches[index].text.len;
+        }
+    }
+    return 0;
+}
+
+// マッチした要素の属性を取得
+export fn streamingGetMatchAttribute(
+    selector_ptr: [*]const u8,
+    selector_len: usize,
+    index: usize,
+    attr_ptr: [*]const u8,
+    attr_len: usize,
+) ?[*]const u8 {
+    const parser = streaming_parser_instance orelse return null;
+    const selector = selector_ptr[0..selector_len];
+    const attr_name = attr_ptr[0..attr_len];
+    
+    if (parser.getMatches(selector)) |matches| {
+        if (index < matches.len) {
+            if (matches[index].attributes.get(attr_name)) |attr_value| {
+                return attr_value.ptr;
+            }
+        }
+    }
+    return null;
+}
+
+export fn streamingGetMatchAttributeLen(
+    selector_ptr: [*]const u8,
+    selector_len: usize,
+    index: usize,
+    attr_ptr: [*]const u8,
+    attr_len: usize,
+) usize {
+    const parser = streaming_parser_instance orelse return 0;
+    const selector = selector_ptr[0..selector_len];
+    const attr_name = attr_ptr[0..attr_len];
+    
+    if (parser.getMatches(selector)) |matches| {
+        if (index < matches.len) {
+            if (matches[index].attributes.get(attr_name)) |attr_value| {
+                return attr_value.len;
+            }
+        }
+    }
+    return 0;
+}
+
+// ストリーミングパーサークリーンアップ
+export fn streamingCleanup() void {
+    if (streaming_parser_instance) |p| {
+        p.deinit();
+        allocator.destroy(p);
+        streaming_parser_instance = null;
+    }
+}
+
 // クリーンアップ
 export fn cleanup() void {
     if (parser_instance) |p| {
@@ -192,4 +324,6 @@ export fn cleanup() void {
         allocator.free(text);
         last_text = null;
     }
+    
+    streamingCleanup();
 }

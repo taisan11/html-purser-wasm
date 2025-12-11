@@ -1,11 +1,12 @@
 {
   "name": "@html-purser/wasm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "exports": "./main.ts",
   "tasks": {
     "test": "zig build test",
     "build": "zig build wasm",
-    "demo": "deno run --allow-read example-deno.ts"
+    "demo": "deno run --allow-read example-deno.ts",
+    "demo:streaming": "deno run --allow-read example-streaming-deno.ts"
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1"

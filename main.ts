@@ -19,6 +19,38 @@ interface WASMExports {
     attr_len: number,
   ) => number;
   cleanup: () => void;
+  
+  // Streaming API
+  streamingInit: () => number;
+  streamingAddSelector: (selector_ptr: number, selector_len: number) => number;
+  streamingFeed: (chunk_ptr: number, chunk_len: number) => number;
+  streamingFinish: () => number;
+  streamingGetMatchCount: (selector_ptr: number, selector_len: number) => number;
+  streamingGetMatchText: (
+    selector_ptr: number,
+    selector_len: number,
+    index: number,
+  ) => number;
+  streamingGetMatchTextLen: (
+    selector_ptr: number,
+    selector_len: number,
+    index: number,
+  ) => number;
+  streamingGetMatchAttribute: (
+    selector_ptr: number,
+    selector_len: number,
+    index: number,
+    attr_ptr: number,
+    attr_len: number,
+  ) => number;
+  streamingGetMatchAttributeLen: (
+    selector_ptr: number,
+    selector_len: number,
+    index: number,
+    attr_ptr: number,
+    attr_len: number,
+  ) => number;
+  streamingCleanup: () => void;
 }
 
 export class HTMLParser {
@@ -156,6 +188,155 @@ export class HTMLParser {
   cleanup() {
     if (!this.wasm) return;
     this.wasm.cleanup();
+  }
+}
+
+export interface StreamMatch {
+  text: string;
+  attributes: Map<string, string>;
+}
+
+export class StreamingHTMLParser {
+  private wasm: WASMExports | null = null;
+  private textEncoder = new TextEncoder();
+  private textDecoder = new TextDecoder();
+  private selectors: string[] = [];
+
+  async init(wasmBytes: BufferSource) {
+    const wasmModule = await WebAssembly.instantiate(wasmBytes, {
+      env: {},
+    });
+    this.wasm = wasmModule.instance.exports as unknown as WASMExports;
+    
+    const success = this.wasm.streamingInit();
+    if (!success) {
+      throw new Error("Failed to initialize streaming parser");
+    }
+  }
+
+  private writeString(str: string): { ptr: number; len: number } {
+    if (!this.wasm) throw new Error("WASM not initialized");
+    
+    const encoded = this.textEncoder.encode(str);
+    const ptr = this.wasm.alloc(encoded.length);
+    if (!ptr) throw new Error("Memory allocation failed");
+    
+    const memory = new Uint8Array(this.wasm.memory.buffer);
+    memory.set(encoded, ptr);
+    
+    return { ptr, len: encoded.length };
+  }
+
+  private readString(ptr: number, len: number): string {
+    if (!this.wasm) throw new Error("WASM not initialized");
+    
+    const memory = new Uint8Array(this.wasm.memory.buffer);
+    const bytes = memory.slice(ptr, ptr + len);
+    return this.textDecoder.decode(bytes);
+  }
+
+  addSelector(selector: string): void {
+    if (!this.wasm) throw new Error("WASM not initialized");
+    
+    this.selectors.push(selector);
+    const { ptr, len } = this.writeString(selector);
+    try {
+      const success = this.wasm.streamingAddSelector(ptr, len);
+      if (!success) {
+        throw new Error(`Failed to add selector: ${selector}`);
+      }
+    } finally {
+      this.wasm.dealloc(ptr, len);
+    }
+  }
+
+  feed(chunk: string): void {
+    if (!this.wasm) throw new Error("WASM not initialized");
+    
+    const { ptr, len } = this.writeString(chunk);
+    try {
+      const success = this.wasm.streamingFeed(ptr, len);
+      if (!success) {
+        throw new Error("Failed to feed chunk");
+      }
+    } finally {
+      this.wasm.dealloc(ptr, len);
+    }
+  }
+
+  finish(): void {
+    if (!this.wasm) throw new Error("WASM not initialized");
+    
+    const success = this.wasm.streamingFinish();
+    if (!success) {
+      throw new Error("Failed to finish parsing");
+    }
+  }
+
+  getMatches(selector: string): StreamMatch[] {
+    if (!this.wasm) throw new Error("WASM not initialized");
+    
+    const sel = this.writeString(selector);
+    try {
+      const count = this.wasm.streamingGetMatchCount(sel.ptr, sel.len);
+      const results: StreamMatch[] = [];
+      
+      for (let i = 0; i < count; i++) {
+        const textPtr = this.wasm.streamingGetMatchText(sel.ptr, sel.len, i);
+        if (!textPtr) continue;
+        
+        const textLen = this.wasm.streamingGetMatchTextLen(sel.ptr, sel.len, i);
+        const text = this.readString(textPtr, textLen);
+        
+        const attributes = new Map<string, string>();
+        results.push({ text, attributes });
+      }
+      
+      return results;
+    } finally {
+      this.wasm.dealloc(sel.ptr, sel.len);
+    }
+  }
+
+  getMatchesText(selector: string): string[] {
+    return this.getMatches(selector).map(m => m.text);
+  }
+
+  getMatchAttribute(selector: string, index: number, attributeName: string): string | null {
+    if (!this.wasm) throw new Error("WASM not initialized");
+    
+    const sel = this.writeString(selector);
+    const attr = this.writeString(attributeName);
+    
+    try {
+      const attrPtr = this.wasm.streamingGetMatchAttribute(
+        sel.ptr,
+        sel.len,
+        index,
+        attr.ptr,
+        attr.len,
+      );
+      
+      if (!attrPtr) return null;
+      
+      const attrLen = this.wasm.streamingGetMatchAttributeLen(
+        sel.ptr,
+        sel.len,
+        index,
+        attr.ptr,
+        attr.len,
+      );
+      
+      return this.readString(attrPtr, attrLen);
+    } finally {
+      this.wasm.dealloc(sel.ptr, sel.len);
+      this.wasm.dealloc(attr.ptr, attr.len);
+    }
+  }
+
+  cleanup() {
+    if (!this.wasm) return;
+    this.wasm.streamingCleanup();
   }
 }
 

@@ -23,6 +23,22 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
 
+    // Streaming demo executable
+    const streaming_exe = b.addExecutable(.{
+        .name = "streaming_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/streaming_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(streaming_exe);
+
+    const streaming_step = b.step("demo-streaming", "Run streaming parser demo");
+    const streaming_cmd = b.addRunArtifact(streaming_exe);
+    streaming_step.dependOn(&streaming_cmd.step);
+    streaming_cmd.step.dependOn(b.getInstallStep());
+
     // WASM library
     const wasm_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
