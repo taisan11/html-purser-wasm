@@ -1,6 +1,7 @@
 {
   "name": "@taisan11/html-purser-wasm",
   "version": "0.2.0",
+  "license": "MIT",
   "exports": {".":"./main.ts","./html_purser_wasm.wasm":"./html_purser_wasm.wasm"},
   "tasks": {
     "test": "zig build test",
